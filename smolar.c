@@ -18,27 +18,32 @@ every function uses `camelCase` for its name, and that's it.
 one thing to note here is every Array has only `float` dtype
 */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>
-#include <string.h>
-#include <time.h>
+// #include <stdio.h>
+// #include <stdlib.h>
+// #include <stdbool.h>
+// #include <string.h>
+// #include <time.h>
+// #include <assert.h>
+#include <omp.h>
+#include "smolar.h"
 
-// our hero
-typedef struct {
-    float* data;        // holds the actual data in continuous way
+// typedef float (*ArrayFunc)(float);
+// // our hero
+// typedef struct {
+//     float* data;        // holds the actual data in continuous way
 
-    int* shape;         // shape of the array
-    int* strides;       // number of bytes to skip for each dimension
-    int* backstrides;   // reverse of strides; how many bytes to skip to go reverse
+//     int* shape;         // shape of the array
+//     int* strides;       // number of bytes to skip for each dimension
+//     int* backstrides;   // reverse of strides; how many bytes to skip to go reverse
 
-    int ndim;           // number of dimensions
-    int itemsize;       // size of one element in the array
-    int totalsize;      // total size to allocate
+//     int ndim;           // number of dimensions
+//     int itemsize;       // size of one element in the array
+//     int totalsize;      // total size to allocate
 
-    bool C_ORDER;       // flag if array is c-order
-    bool F_ORDER;       // flag if array is f-order
-} Array;
+//     bool C_ORDER;       // flag if array is c-order
+//     bool F_ORDER;       // flag if array is f-order
+// } Array;
+
 
 /*
 free all the memory allocated by an Array
@@ -194,8 +199,7 @@ void smFromValues(Array* arr, float* values) {
 random array from shape, values will be in range `[0.0, 1.0]`
 */
 Array* smRandom(const int* shape, int ndim) {
-    Array* arr = smCreate(shape, ndim);
-
+    Array* arr = smCreate(shape, ndim); 
     for(int i=0; i<arr->totalsize; i++) {
         arr->data[i] = _getrandomFloat(0.f, 1.f);
     }
@@ -507,6 +511,9 @@ can be parallelized.
 Array* __PaddArrays__(Array* a, Array* b) {
     Array* res = smCreate(a->shape, a->ndim);
 
+    #ifdef PARALLEL
+    #pragma omp parallel for
+    #endif
     for(int i=0; i<a->totalsize; i++) {
         res->data[i] = a->data[i] + b->data[i];
     }
@@ -514,9 +521,13 @@ Array* __PaddArrays__(Array* a, Array* b) {
     return res;
 }
 
+
 Array* __PmulArrays__(Array* a, Array* b) {
     Array* res = smCreate(a->shape, a->ndim);
 
+    #ifdef PARALLEL
+    #pragma omp parallel for
+    #endif
     for(int i=0; i<a->totalsize; i++) {
         res->data[i] = a->data[i] * b->data[i];
     }
@@ -561,6 +572,9 @@ Array* smAdd(Array* a, Array* b) {
 Array* __PnegArray__(Array* arr) {
     Array* res = smCreate(arr->shape, arr->ndim);
     
+    #ifdef PARALLEL
+    #pragma omp parallel for
+    #endif
     for(int i=0; i<res->totalsize; i++) {
         res->data[i] = -1 * arr->data[i];
     }
@@ -577,6 +591,23 @@ Array* __PsubArrays__(Array* a, Array* b) {
     Array* res = smAdd(a, bneg);
 
     smCleanup(bneg);
+    return res;
+}
+
+Array* __PmatMulArrays__(Array* a, Array* b) {
+    int shape[2] = {a->shape[0], b->shape[1]};
+    Array* res = smCreate(shape, 2);
+
+    // #pragma omp parallel for
+    for(int i=0; i<a->totalsize; i++) {
+        for(int j=0; j<b->totalsize; j++) {
+            res->data[i * b->shape[1] + j] = 0;
+            for(int k=0; k<a->shape[1]; k++) {
+                res->data[i * b->shape[1] + j] += a->data[i * a->shape[1] + k] * b->data[k * b->shape[1] + j];
+            }
+        }
+    }
+
     return res;
 }
 
@@ -612,24 +643,64 @@ Array* smMul(Array* a, Array* b) {
     return res;
 }
 
+void smApply(Array *arr, ArrayFunc func) {
+    // Array* res = smCreate(arr->shape, arr->ndim);
+    
+    #ifdef PARALLEL
+    #pragma omp parallel for
+    #endif
+    for(int i=0; i<arr->totalsize; i++) {
+        arr->data[i] = func(arr->data[i]);
+    }
 
-int main() {
-    // new random values 
-    srand(time(NULL));
-
-    clock_t start, end;
-    double cpu_time;
-
-    // 10,000 x 10,000 array
-    const int shape[] = {1e4, 1e4};
-    Array *a = smRandom(shape, 2);
-
-    start = clock();
-    Array *res = smAdd(a, a);
-    end = clock();
-
-    cpu_time = ((double) (end - start)) / CLOCKS_PER_SEC * 1000;
-
-    printf("\n>> elapsed time: %.5f ms\n\n", cpu_time);
-    return 0;
+    // return res;
 }
+
+
+
+
+// int main() {
+//     // new random values 
+//     srand(time(NULL));
+
+//     const int shape[] = {20000, 20000};
+
+//     // 10,000 x 10,000 array
+//     // const int shape[] = {1e4, 1e4};
+//     Array *a = smRandom(shape, 2);
+//     Array *b = smRandom(shape, 2);
+
+//     // omp_set_num_threads(omp_get_max_threads());
+//     double start = omp_get_wtime();
+//     Array* res = smAdd(a, b);
+//     double end = omp_get_wtime();
+
+//     printf("smAdd: %.3f\n", end - start);
+
+//     #pragma omp parallel for
+//     for (int i = 0; i < res->totalsize; i++) {
+//         assert(res->data[i] == a->data[i] + b->data[i]);
+//     }
+
+//     // smShow(res); 
+
+//     Array* res_copy = smCreate(res->shape, res->ndim);
+//     smFromValues(res_copy, res->data);
+//     start = omp_get_wtime();
+//     smApply(res, square);
+//     end = omp_get_wtime();
+
+//     printf("smApply: %.3f\n", end - start);
+
+
+//     #pragma omp parallel for
+//     for (int i = 0; i < res->totalsize; i++) {
+//         assert(res->data[i] == square(res_copy->data[i]));
+//     }
+
+//     // smShow(res);
+
+
+
+//     return 0;
+// }
